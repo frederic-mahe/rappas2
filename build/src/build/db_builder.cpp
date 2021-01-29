@@ -134,7 +134,7 @@ db_builder::db_builder(const string& working_directory, const string& ar_probabi
                        size_t kmer_size, xpas::phylo_kmer::score_type omega,
                        filter_type filter, double mu, size_t num_threads)
     : _working_directory{working_directory}
-    ,_hashmaps_directory{(fs::path{working_directory} / fs::path{"hashmaps"}).string()}
+    , _hashmaps_directory{(fs::path{working_directory} / fs::unique_path()).string()}
     , _ar_probabilities_file{ar_probabilities_file}
     , _original_tree_file{original_tree_file}
     , _extended_tree_file{extended_tree_file}
@@ -165,6 +165,9 @@ void create_directory(const std::string& dirname)
 
 void db_builder::run()
 {
+    /// create a temporary directory for hashmaps
+    create_directory(_hashmaps_directory);
+
     /// The first stage of the algorithm -- create a hashmap for every group node
     const auto& [group_ids, num_tuples, construction_time] = construct_group_hashmaps();
 
@@ -178,6 +181,9 @@ void db_builder::run()
         total_entries += kmer_entry.second.size();
     }
 
+    /// remove temporary files
+    fs::remove_all(_hashmaps_directory);
+
     std::cout << "Built " << total_entries << " phylo-kmers out of " << num_tuples << " for "
               << _phylo_kmer_db.size() << " k-mer values.\nTime (ms): "
               << construction_time + merge_time << "\n\n" << std::flush;
@@ -189,8 +195,6 @@ std::tuple<std::vector<phylo_kmer::branch_type>, size_t, unsigned long> db_build
     _extended_mapping = rappas::io::load_extended_mapping(_extended_mapping_file);
     _artree_mapping = rappas::io::load_artree_mapping(_artree_mapping_file);
 
-    /// create a temporary directory for hashmaps
-    create_directory(_hashmaps_directory);
 
     /// Load .newick files
     const auto original_tree = xpas::io::load_newick(_original_tree_file);
@@ -413,11 +417,6 @@ unsigned long db_builder::merge_hashmaps(const std::vector<phylo_kmer::branch_ty
             }
         }
 
-        for (const auto& [key, stats] : filter_stats)
-        {
-            std::cout << stats << " ";
-        }
-        std::cout << std::endl << std::endl;
 
         std::cout << "Filtering phylo k-mers..." << std::endl;
 
@@ -429,6 +428,12 @@ unsigned long db_builder::merge_hashmaps(const std::vector<phylo_kmer::branch_ty
             filter_values.push_back(entry.second);
         }
 
+        for (const auto& value : filter_values)
+        {
+            std::cout << value << " ";
+        }
+        std::cout << std::endl << std::endl;
+
         size_t counter = 0;
         if (_filter == filter_type::entropy)
         {
@@ -436,6 +441,12 @@ unsigned long db_builder::merge_hashmaps(const std::vector<phylo_kmer::branch_ty
             const auto qth_element = filter_values.size() * _mu;
             std::nth_element(filter_values.begin(), filter_values.begin() + qth_element, filter_values.end());
             const auto quantile = filter_values[qth_element];
+
+            for (const auto& value : filter_values)
+            {
+                std::cout << value << " ";
+            }
+            std::cout << std::endl << std::endl;
 
             std::cout << "Filter threshold value: " << quantile << std::endl;
 
@@ -458,8 +469,12 @@ unsigned long db_builder::merge_hashmaps(const std::vector<phylo_kmer::branch_ty
                     if (filter_values[key] <= quantile)
                     {
                         _phylo_kmer_db.insert(key, {group_id, score});
-                        //std::cout << filter_values[key] << " ";
+                        //std::cout << "TAKE " << filter_values[key] << " " << filter_stats[key] << std::endl;
                     }
+                    /*else
+                    {
+                        std::cout << "IGNORE " << filter_values[key] << " " << filter_stats[key] << std::endl;
+                    }*/
                 }
             }
             std::cout << std::endl;
@@ -562,7 +577,15 @@ unsigned long db_builder::merge_hashmaps(const std::vector<phylo_kmer::branch_ty
             }
         }
     }
-
+/*
+    for (const auto& [key, entries] : _phylo_kmer_db)
+    {
+        std::cout << key << " " << xpas::decode_kmer(key, _kmer_size) << ": " << std::endl;
+        for (const auto& [branch, score] : entries)
+        {
+            std::cout << "\t" << branch << " -> " << score << " " << std::pow(10, score) << std::endl;
+        }
+    }*/
     const auto end = std::chrono::steady_clock::now();
     return std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count();
 }
